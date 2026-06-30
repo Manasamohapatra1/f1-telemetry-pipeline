@@ -153,10 +153,15 @@ st.sidebar.subheader("Compare Fastest Laps")
 # By default, select the top 2 fastest drivers
 default_drivers = laps_df.groupby('driver_id')['lap_time_ms'].min().sort_values().head(2).index.tolist()
 
+# Only allow selecting drivers who actually participated in this specific race
+valid_race_drivers = laps_df['driver_id'].unique().tolist()
+# Sort alphabetically for better UX
+valid_race_drivers.sort()
+
 selected_drivers = st.sidebar.multiselect(
     "Select Drivers", 
-    options=drivers_df['driver_id'].tolist(),
-    default=default_drivers
+    options=valid_race_drivers,
+    default=[d for d in default_drivers if d in valid_race_drivers]
 )
 
 if not selected_drivers:
