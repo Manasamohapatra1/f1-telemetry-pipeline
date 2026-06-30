@@ -13,6 +13,14 @@ import fastf1
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 db_url = os.getenv("DATABASE_URL")
 
+# Fallback to Streamlit secrets if running on Streamlit Cloud
+if not db_url and "DATABASE_URL" in st.secrets:
+    db_url = st.secrets["DATABASE_URL"]
+    
+if not db_url:
+    st.error("DATABASE_URL is not set. Please set it in .env locally or Streamlit Secrets on the cloud.")
+    st.stop()
+
 st.set_page_config(page_title="F1 Telemetry Dashboard", layout="wide", page_icon="🏎️")
 
 from sqlalchemy.pool import NullPool
