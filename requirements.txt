@@ -9,7 +9,7 @@ pandas==2.2.2
 numpy==1.26.4
 
 # Storage / Database Interaction
-SQLAlchemy<2.0
+SQLAlchemy>=2.0.0
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1  # For managing Supabase/Neon credentials
 
