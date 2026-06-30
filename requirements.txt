@@ -1,5 +1,5 @@
 # Orchestration (Airflow is typically installed via Docker image, but adding for reference if running locally without docker)
-apache-airflow==2.9.1
+
 
 # Extraction
 fastf1==3.3.5
