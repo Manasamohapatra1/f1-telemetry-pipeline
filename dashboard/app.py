@@ -43,6 +43,104 @@ def load_schedule(year=2025):
     # Filter out non-race events if any, usually RoundNumber > 0 are actual races
     return schedule[schedule['RoundNumber'] > 0]
 
+@st.cache_data(ttl=3600)
+def load_race_winner(year, event_name):
+    try:
+        session = fastf1.get_session(year, event_name, 'R')
+        session.load(laps=False, telemetry=False, weather=False, messages=False)
+        if not session.results.empty:
+            winner = session.results.iloc[0]
+            headshot = winner.get('HeadshotUrl')
+            if pd.isna(headshot) or not str(headshot).startswith('http'):
+                headshot = None
+            return {
+                "full_name": winner.get('FullName', 'Unknown Driver'),
+                "team_name": winner.get('TeamName', 'Unknown Team'),
+                "driver_number": str(winner.get('DriverNumber', '')),
+                "headshot_url": headshot,
+                "time": str(winner.get('Time', ''))
+            }
+    except Exception as e:
+        return None
+    return None
+
+@st.cache_data(ttl=3600)
+def load_pole_position(year, event_name):
+    try:
+        session = fastf1.get_session(year, event_name, 'Q')
+        session.load(laps=False, telemetry=False, weather=False, messages=False)
+        if not session.results.empty:
+            pole = session.results.iloc[0]
+            headshot = pole.get('HeadshotUrl')
+            if pd.isna(headshot) or not str(headshot).startswith('http'):
+                headshot = None
+            time_str = "N/A"
+            for q_col in ['Q3', 'Q2', 'Q1', 'Time']:
+                if q_col in pole and pd.notnull(pole[q_col]):
+                    time_str = str(pole[q_col])
+                    break
+            return {
+                "full_name": pole.get('FullName', 'Unknown Driver'),
+                "team_name": pole.get('TeamName', 'Unknown Team'),
+                "driver_number": str(pole.get('DriverNumber', '')),
+                "headshot_url": headshot,
+                "time": time_str
+            }
+    except Exception as e:
+        return None
+    return None
+
+@st.cache_data(ttl=3600)
+def load_fastest_lap_info(year, event_name, _laps_df, _drivers_df):
+    try:
+        if _laps_df.empty or 'lap_time_ms' not in _laps_df.columns:
+            return None
+        valid_laps = _laps_df[_laps_df['lap_time_ms'] > 0]
+        if valid_laps.empty:
+            return None
+        fastest_row = valid_laps.loc[valid_laps['lap_time_ms'].idxmin()]
+        fl_driver_id = fastest_row['driver_id']
+        fl_time_ms = fastest_row['lap_time_ms']
+        fl_lap_num = fastest_row['lap_number']
+        
+        fl_seconds = fl_time_ms / 1000.0
+        fl_min = int(fl_seconds // 60)
+        fl_sec = fl_seconds % 60
+        fl_time_str = f"{fl_min:02d}:{fl_sec:06.3f} (Lap {fl_lap_num})"
+        
+        d_row = _drivers_df[_drivers_df['driver_id'] == fl_driver_id]
+        if not d_row.empty:
+            full_name = d_row.iloc[0]['full_name']
+            team_name = d_row.iloc[0]['team_name']
+            driver_number = str(d_row.iloc[0]['driver_number'])
+        else:
+            full_name = fl_driver_id
+            team_name = "Unknown Team"
+            driver_number = ""
+            
+        headshot = None
+        try:
+            session = fastf1.get_session(year, event_name, 'R')
+            session.load(laps=False, telemetry=False, weather=False, messages=False)
+            if not session.results.empty:
+                res_row = session.results[session.results['Abbreviation'] == fl_driver_id]
+                if not res_row.empty:
+                    hs = res_row.iloc[0].get('HeadshotUrl')
+                    if pd.notna(hs) and str(hs).startswith('http'):
+                        headshot = hs
+        except:
+            pass
+            
+        return {
+            "full_name": full_name,
+            "team_name": team_name,
+            "driver_number": driver_number,
+            "headshot_url": headshot,
+            "time": fl_time_str
+        }
+    except Exception as e:
+        return None
+
 @st.cache_data(ttl=600)
 def load_drivers():
     return pd.read_sql("SELECT * FROM dim_drivers", con=engine)
@@ -148,6 +246,54 @@ selected_race_id = expected_race_id
 
 drivers_df = load_drivers()
 laps_df = load_laps(selected_race_id)
+
+# Display Race Highlights Cards (Race Winner, Pole Position & Fastest Lap)
+winner_info = load_race_winner(current_year, selected_event)
+pole_info = load_pole_position(current_year, selected_event)
+fastest_lap_info = load_fastest_lap_info(current_year, selected_event, laps_df, drivers_df)
+
+if winner_info or pole_info or fastest_lap_info:
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if winner_info:
+            with st.container():
+                w_col1, w_col2 = st.columns([1, 2.5])
+                with w_col1:
+                    if winner_info["headshot_url"]:
+                        st.image(winner_info["headshot_url"], width=85)
+                    else:
+                        st.markdown("### 🏆")
+                with w_col2:
+                    st.markdown(f"**🏆 Winner**\n\n**{winner_info['full_name']}** (#{winner_info['driver_number']})\n\n*{winner_info['team_name']}*")
+                    if winner_info["time"] and winner_info["time"] not in ["NaT", "None", ""]:
+                        st.caption(f"Time: `{winner_info['time']}`")
+    with col2:
+        if pole_info:
+            with st.container():
+                p_col1, p_col2 = st.columns([1, 2.5])
+                with p_col1:
+                    if pole_info["headshot_url"]:
+                        st.image(pole_info["headshot_url"], width=85)
+                    else:
+                        st.markdown("### ⚡")
+                with p_col2:
+                    st.markdown(f"**⚡ Pole Position**\n\n**{pole_info['full_name']}** (#{pole_info['driver_number']})\n\n*{pole_info['team_name']}*")
+                    if pole_info["time"] and pole_info["time"] not in ["NaT", "None", "", "N/A"]:
+                        st.caption(f"Lap: `{pole_info['time']}`")
+    with col3:
+        if fastest_lap_info:
+            with st.container():
+                f_col1, f_col2 = st.columns([1, 2.5])
+                with f_col1:
+                    if fastest_lap_info["headshot_url"]:
+                        st.image(fastest_lap_info["headshot_url"], width=85)
+                    else:
+                        st.markdown("### 🟣")
+                with f_col2:
+                    st.markdown(f"**🟣 Fastest Lap**\n\n**{fastest_lap_info['full_name']}** (#{fastest_lap_info['driver_number']})\n\n*{fastest_lap_info['team_name']}*")
+                    if fastest_lap_info["time"]:
+                        st.caption(f"Lap Time: `{fastest_lap_info['time']}`")
+    st.divider()
 
 st.sidebar.subheader("Compare Fastest Laps")
 # By default, select the top 2 fastest drivers
