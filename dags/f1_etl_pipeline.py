@@ -40,10 +40,10 @@ def etl_f1_telemetry(**kwargs):
     logger.info(f"Starting ETL for {year} {race_name}")
     
     # 1. Extract and Transform
-    races, drivers, laps, telemetry = extract_and_transform(year, race_name)
+    races, drivers, laps, telemetry, highlights = extract_and_transform(year, race_name)
     
     # 2. Load
-    load_data_to_postgres(races, drivers, laps, telemetry)
+    load_data_to_postgres(races, drivers, laps, telemetry, highlights)
     
     logger.info("ETL process completed successfully!")
 

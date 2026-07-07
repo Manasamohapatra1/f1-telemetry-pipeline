@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS dim_drivers (
     driver_id VARCHAR(10) PRIMARY KEY, -- e.g., 'VER', 'HAM'
     driver_number INT,
     full_name VARCHAR(100),
-    team_name VARCHAR(100)
+    team_name VARCHAR(100),
+    headshot_url VARCHAR(255)
 );
 
 -- Dimension Table: Races
@@ -16,6 +17,17 @@ CREATE TABLE IF NOT EXISTS dim_races (
     race_name VARCHAR(100),
     circuit_name VARCHAR(100),
     session_date DATE
+);
+
+-- Dimension Table: Race Highlights (Podium Stats)
+CREATE TABLE IF NOT EXISTS dim_race_highlights (
+    race_id VARCHAR(50) PRIMARY KEY REFERENCES dim_races(race_id),
+    winner_driver_id VARCHAR(10),
+    winner_time VARCHAR(50),
+    pole_driver_id VARCHAR(10),
+    pole_time VARCHAR(50),
+    fastest_lap_driver_id VARCHAR(10),
+    fastest_lap_time VARCHAR(50)
 );
 
 -- Fact Table: Laps

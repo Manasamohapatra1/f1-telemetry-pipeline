@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import os
 import time
 import requests
@@ -44,102 +44,53 @@ def load_schedule(year=2025):
     return schedule[schedule['RoundNumber'] > 0]
 
 @st.cache_data(ttl=3600)
-def load_race_winner(year, event_name):
+def load_race_highlights(race_id):
     try:
-        session = fastf1.get_session(year, event_name, 'R')
-        session.load(laps=False, telemetry=False, weather=False, messages=False)
-        if not session.results.empty:
-            winner = session.results.iloc[0]
-            headshot = winner.get('HeadshotUrl')
-            if pd.isna(headshot) or not str(headshot).startswith('http'):
-                headshot = None
-            return {
-                "full_name": winner.get('FullName', 'Unknown Driver'),
-                "team_name": winner.get('TeamName', 'Unknown Team'),
-                "driver_number": str(winner.get('DriverNumber', '')),
-                "headshot_url": headshot,
-                "time": str(winner.get('Time', ''))
-            }
+        query = text("""
+            SELECT h.*, 
+                   dw.full_name as w_name, dw.team_name as w_team, dw.driver_number as w_num, dw.headshot_url as w_hs,
+                   dp.full_name as p_name, dp.team_name as p_team, dp.driver_number as p_num, dp.headshot_url as p_hs,
+                   df.full_name as f_name, df.team_name as f_team, df.driver_number as f_num, df.headshot_url as f_hs
+            FROM dim_race_highlights h
+            LEFT JOIN dim_drivers dw ON h.winner_driver_id = dw.driver_id
+            LEFT JOIN dim_drivers dp ON h.pole_driver_id = dp.driver_id
+            LEFT JOIN dim_drivers df ON h.fastest_lap_driver_id = df.driver_id
+            WHERE h.race_id = :rid
+        """)
+        with engine.connect() as conn:
+            res = conn.execute(query, {"rid": race_id}).mappings().first()
+            if res:
+                winner_info = {
+                    "full_name": res["w_name"] or "Unknown Driver",
+                    "team_name": res["w_team"] or "Unknown Team",
+                    "driver_number": str(res["w_num"] or ""),
+                    "headshot_url": res["w_hs"],
+                    "time": res["winner_time"]
+                } if res["winner_driver_id"] else None
+                
+                pole_info = {
+                    "full_name": res["p_name"] or "Unknown Driver",
+                    "team_name": res["p_team"] or "Unknown Team",
+                    "driver_number": str(res["p_num"] or ""),
+                    "headshot_url": res["p_hs"],
+                    "time": res["pole_time"]
+                } if res["pole_driver_id"] else None
+                
+                fl_info = {
+                    "full_name": res["f_name"] or "Unknown Driver",
+                    "team_name": res["f_team"] or "Unknown Team",
+                    "driver_number": str(res["f_num"] or ""),
+                    "headshot_url": res["f_hs"],
+                    "time": res["fastest_lap_time"]
+                } if res["fastest_lap_driver_id"] else None
+                
+                return winner_info, pole_info, fl_info
     except Exception as e:
-        return None
-    return None
+        print(f"Error loading highlights for {race_id}: {e}")
+        return None, None, None
+    return None, None, None
 
-@st.cache_data(ttl=3600)
-def load_pole_position(year, event_name):
-    try:
-        session = fastf1.get_session(year, event_name, 'Q')
-        session.load(laps=False, telemetry=False, weather=False, messages=False)
-        if not session.results.empty:
-            pole = session.results.iloc[0]
-            headshot = pole.get('HeadshotUrl')
-            if pd.isna(headshot) or not str(headshot).startswith('http'):
-                headshot = None
-            time_str = "N/A"
-            for q_col in ['Q3', 'Q2', 'Q1', 'Time']:
-                if q_col in pole and pd.notnull(pole[q_col]):
-                    time_str = str(pole[q_col])
-                    break
-            return {
-                "full_name": pole.get('FullName', 'Unknown Driver'),
-                "team_name": pole.get('TeamName', 'Unknown Team'),
-                "driver_number": str(pole.get('DriverNumber', '')),
-                "headshot_url": headshot,
-                "time": time_str
-            }
-    except Exception as e:
-        return None
-    return None
 
-@st.cache_data(ttl=3600)
-def load_fastest_lap_info(year, event_name, _laps_df, _drivers_df):
-    try:
-        if _laps_df.empty or 'lap_time_ms' not in _laps_df.columns:
-            return None
-        valid_laps = _laps_df[_laps_df['lap_time_ms'] > 0]
-        if valid_laps.empty:
-            return None
-        fastest_row = valid_laps.loc[valid_laps['lap_time_ms'].idxmin()]
-        fl_driver_id = fastest_row['driver_id']
-        fl_time_ms = fastest_row['lap_time_ms']
-        fl_lap_num = fastest_row['lap_number']
-        
-        fl_seconds = fl_time_ms / 1000.0
-        fl_min = int(fl_seconds // 60)
-        fl_sec = fl_seconds % 60
-        fl_time_str = f"{fl_min:02d}:{fl_sec:06.3f} (Lap {fl_lap_num})"
-        
-        d_row = _drivers_df[_drivers_df['driver_id'] == fl_driver_id]
-        if not d_row.empty:
-            full_name = d_row.iloc[0]['full_name']
-            team_name = d_row.iloc[0]['team_name']
-            driver_number = str(d_row.iloc[0]['driver_number'])
-        else:
-            full_name = fl_driver_id
-            team_name = "Unknown Team"
-            driver_number = ""
-            
-        headshot = None
-        try:
-            session = fastf1.get_session(year, event_name, 'R')
-            session.load(laps=False, telemetry=False, weather=False, messages=False)
-            if not session.results.empty:
-                res_row = session.results[session.results['Abbreviation'] == fl_driver_id]
-                if not res_row.empty:
-                    hs = res_row.iloc[0].get('HeadshotUrl')
-                    if pd.notna(hs) and str(hs).startswith('http'):
-                        headshot = hs
-        except:
-            pass
-            
-        return {
-            "full_name": full_name,
-            "team_name": team_name,
-            "driver_number": driver_number,
-            "headshot_url": headshot,
-            "time": fl_time_str
-        }
-    except Exception as e:
-        return None
 
 @st.cache_data(ttl=600)
 def load_drivers():
@@ -248,9 +199,7 @@ drivers_df = load_drivers()
 laps_df = load_laps(selected_race_id)
 
 # Display Race Highlights Cards (Race Winner, Pole Position & Fastest Lap)
-winner_info = load_race_winner(current_year, selected_event)
-pole_info = load_pole_position(current_year, selected_event)
-fastest_lap_info = load_fastest_lap_info(current_year, selected_event, laps_df, drivers_df)
+winner_info, pole_info, fastest_lap_info = load_race_highlights(selected_race_id)
 
 if winner_info or pole_info or fastest_lap_info:
     col1, col2, col3 = st.columns(3)

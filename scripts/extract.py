@@ -19,12 +19,16 @@ def process_driver(row, session, race_id):
     driver_num = int(row['DriverNumber']) if pd.notna(row['DriverNumber']) else 0
     full_name = row['FullName']
     team_name = row['TeamName']
+    headshot = row.get('HeadshotUrl')
+    if pd.isna(headshot) or not str(headshot).startswith('http'):
+        headshot = None
 
     dim_driver = {
         'driver_id': driver_id,
         'driver_number': driver_num,
         'full_name': full_name,
-        'team_name': team_name
+        'team_name': team_name,
+        'headshot_url': headshot
     }
 
     fct_laps_list = []
@@ -162,11 +166,58 @@ def extract_and_transform(year: int, race_name: str):
     fct_laps = pd.DataFrame(fct_laps_list)
     fct_telemetry = pd.concat(fct_telemetry_list, ignore_index=True) if fct_telemetry_list else pd.DataFrame()
 
+    # Extract highlights
+    winner_id = ''
+    winner_time = ''
+    if not results.empty:
+        w_row = results.iloc[0]
+        winner_id = w_row.get('Abbreviation', '')
+        winner_time = str(w_row.get('Time', ''))
+        
+    pole_id = ''
+    pole_time = ''
+    try:
+        session_q = fastf1.get_session(year, race_name, 'Q')
+        session_q.load(laps=False, telemetry=False, weather=False, messages=False)
+        if not session_q.results.empty:
+            p_row = session_q.results.iloc[0]
+            pole_id = p_row.get('Abbreviation', '')
+            for q_col in ['Q3', 'Q2', 'Q1', 'Time']:
+                if q_col in p_row and pd.notnull(p_row[q_col]):
+                    pole_time = str(p_row[q_col])
+                    break
+    except Exception as e:
+        logger.warning(f"Could not load Qualifying for {race_id}: {e}")
+        
+    fl_id = ''
+    fl_time = ''
+    if not fct_laps.empty and 'lap_time_ms' in fct_laps.columns:
+        valid_laps = fct_laps[fct_laps['lap_time_ms'] > 0]
+        if not valid_laps.empty:
+            fl_row = valid_laps.loc[valid_laps['lap_time_ms'].idxmin()]
+            fl_id = fl_row['driver_id']
+            fl_ms = fl_row['lap_time_ms']
+            fl_num = fl_row['lap_number']
+            fl_seconds = fl_ms / 1000.0
+            fl_min = int(fl_seconds // 60)
+            fl_sec = fl_seconds % 60
+            fl_time = f"{fl_min:02d}:{fl_sec:06.3f} (Lap {fl_num})"
+            
+    dim_highlights = pd.DataFrame([{
+        'race_id': race_id,
+        'winner_driver_id': winner_id,
+        'winner_time': winner_time,
+        'pole_driver_id': pole_id,
+        'pole_time': pole_time,
+        'fastest_lap_driver_id': fl_id,
+        'fastest_lap_time': fl_time
+    }])
+
     logger.info(f"Extraction complete! Extracted {len(fct_laps)} laps and {len(fct_telemetry)} telemetry points.")
-    return dim_races, dim_drivers, fct_laps, fct_telemetry
+    return dim_races, dim_drivers, fct_laps, fct_telemetry, dim_highlights
 
 if __name__ == "__main__":
     # Test script locally
-    races, drivers, laps, telemetry = extract_and_transform(2023, "Bahrain")
+    races, drivers, laps, telemetry, highlights = extract_and_transform(2023, "Bahrain")
     print(races.head())
     print(drivers.head())
